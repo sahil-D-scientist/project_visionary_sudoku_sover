@@ -1,0 +1,122 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Visionary Sudoku Solver</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            text-align: center;
+            background-color: #f4f4f9;
+            margin: 0;
+            padding: 20px;
+        }
+
+        .container {
+            margin: 50px auto;
+            width: 60%;
+            background: white;
+            padding: 20px;
+            border-radius: 10px;
+            box-shadow: 0 0 10px rgba(0, 0, 0, 0.1);
+        }
+
+        .btn {
+            background-color: #007bff;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            font-size: 16px;
+            border-radius: 5px;
+            cursor: pointer;
+        }
+
+        .btn:hover {
+            background-color: #0056b3;
+        }
+
+        #preview, #solved-preview {
+            margin-top: 20px;
+            max-width: 100%;
+            height: auto;
+            display: none;
+        }
+
+        #loading {
+            display: none;
+        }
+        #original_image,#solved_image1{
+            font-weight: bold;
+            font-size: 35px;
+            color: purple;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Visionary Sudoku Solver</h1>
+        <p>Upload an image of a Sudoku puzzle, and we'll solve it for you!</p>
+        <form id="upload-form">
+            <input id="image-input" type="file" name="image" accept="image/*" required>
+            <br><br>
+            <button class="btn" type="submit">Upload and Solve</button>
+        </form>
+        <p id ="original_image"></p>
+        <img id="preview" alt="Uploaded Sudoku Preview">
+        <div id="loading">Solving Sudoku... Please wait.</div>
+        <p id="solved_image1"></p>
+        <img id="solved-preview" alt="Solved Sudoku Image">
+    </div>
+
+    <script>
+        document.getElementById('upload-form').addEventListener('submit', function(event) {
+            event.preventDefault();
+
+            const formData = new FormData();
+            const fileInput = document.getElementById('image-input');
+            const file = fileInput.files[0];
+            const preview = document.getElementById('preview');
+            const solvedPreview = document.getElementById('solved-preview');
+            const loading = document.getElementById('loading');
+
+            if (file) {
+                const reader = new FileReader();
+                document.getElementById("original_image").innerHTML="<b>Original Image</b>"
+                reader.onload = function(e) {
+                    preview.src = e.target.result;
+                    preview.style.display = 'block';
+                };
+
+                reader.readAsDataURL(file);
+
+                formData.append('image', file);
+
+                loading.style.display = 'block';
+                solvedPreview.style.display = 'none';
+
+                fetch('/', {
+                    method: 'POST',
+                    body: formData
+                })
+                .then(response => response.json())
+                .then(data => {
+                    loading.style.display = 'none';
+                    document.getElementById("solved_image1").innerHTML="Solved Image"
+
+                    if (data.solved_image) {
+                        solvedPreview.src = `data:image/png;base64,${data.solved_image}`;
+                        solvedPreview.style.display = 'block';
+                    } else {
+                        alert("Error: " + (data.error || "Unknown error"));
+                    }
+                })
+                .catch(error => {
+                    loading.style.display = 'none';
+                    alert("Error solving Sudoku: " + error.message);
+                });
+            }
+        });
+    </script>
+</body>
+</html>
