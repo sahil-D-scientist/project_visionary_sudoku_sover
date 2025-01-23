@@ -61,149 +61,250 @@ def get_solved_sudoku(board):
     else:
         raise ValueError("No solution exists for the given Sudoku grid.")
 
+def find_largest_contour(image):
+    """Finds the largest contour in a binary image."""
+    contours, _ = cv2.findContours(image, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    largest_contour = max(contours, key=cv2.contourArea)
+    return largest_contour
+
+def get_contour_corners(contour):
+    """Approximates the corners of a contour."""
+    epsilon = 0.02 * cv2.arcLength(contour, True)
+    approx_corners = cv2.approxPolyDP(contour, epsilon, True)
+    if len(approx_corners) == 4:
+        return approx_corners.reshape((4, 2))
+    else:
+        raise ValueError("Could not find exactly 4 corners.")
+
+def order_points(pts):
+    """Orders the points in a consistent way: top-left, top-right, bottom-right, bottom-left."""
+    rect = np.zeros((4, 2), dtype="float32")
+    s = pts.sum(axis=1)
+    rect[0] = pts[np.argmin(s)]  # Top-left
+    rect[2] = pts[np.argmax(s)]  # Bottom-right
+
+    diff = np.diff(pts, axis=1)
+    rect[1] = pts[np.argmin(diff)]  # Top-right
+    rect[3] = pts[np.argmax(diff)]  # Bottom-left
+
+    return rect
+
+def four_point_transform(image, pts):
+    """Performs a perspective transformation based on four points."""
+    rect = order_points(pts)
+    (tl, tr, br, bl) = rect
+
+    # Compute the width and height of the new image
+    width_a = np.linalg.norm(br - bl)
+    width_b = np.linalg.norm(tr - tl)
+    max_width = max(int(width_a), int(width_b))
+
+    height_a = np.linalg.norm(tr - br)
+    height_b = np.linalg.norm(tl - bl)
+    max_height = max(int(height_a), int(height_b))
+
+    # Define the destination points for a "birds-eye" view
+    dst = np.array([
+        [0, 0],
+        [max_width - 1, 0],
+        [max_width - 1, max_height - 1],
+        [0, max_height - 1]
+    ], dtype="float32")
+
+    # Compute the perspective transform matrix and apply it
+    matrix = cv2.getPerspectiveTransform(rect, dst)
+    warped = cv2.warpPerspective(image, matrix, (max_width, max_height))
+    return warped
+
+
+
+def pre_process_image_new(img, skip_dilate=False, flag=0):
+    """Uses a blurring function, adaptive thresholding and dilation to expose the main features of an image."""
+
+    # Gaussian blur with a kernal size (height, width) of 9.
+    # Note that kernal sizes must be positive and odd and the kernel must be square.
+    proc = cv2.GaussianBlur(img.copy(), (9, 9), 0)
+
+    # Adaptive threshold using 11 nearest neighbour pixels
+    proc = cv2.adaptiveThreshold(proc, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY, 11, 3)
+
+    # Invert colours, so gridlines have non-zero pixel values.
+    # Necessary to dilate the image, otherwise will look like erosion instead.
+    proc = cv2.bitwise_not(proc, proc)
+
+    if not skip_dilate:
+        # Dilate the image to increase the size of the grid lines.
+        kernel = np.array([[0., 1., 0.], [1., 1., 1.], [0., 1., 0.]], np.uint8)
+        proc = cv2.dilate(proc, kernel)
+
+    return proc
 def remove_lines_and_thin_digits(image):
     """
     Aggressively remove horizontal and vertical lines from the Sudoku grid, and preserve digits.
     """
-    import cv2
-    import numpy as np
-
-    # Convert to grayscale if the image is not already
+    # Step 1: Convert to grayscale if needed
     if len(image.shape) == 3:
         gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
     else:
         gray = image
-
-    # Apply Gaussian blur to reduce noise
-    blurred = cv2.GaussianBlur(gray, (5, 5), 0)
-
-    # Apply binary inverse thresholding
-    _, binary = cv2.threshold(blurred, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
-
-    # Adaptive morphological kernel sizes based on image size
+    binary=pre_process_image_new(gray,skip_dilate=True)
+    # cv2.imshow("Step 3: Binary Thresholding", binary)
+    # cv2.waitKey(0)
+    # cv2.destroyAllWindows()
+    # cv2.waitKey(1)
+    # Step 4: Create horizontal and vertical kernels
     height, width = binary.shape
-    horizontal_kernel_size = max(25, width // 18)
-    vertical_kernel_size = max(25, height // 18)
+    horizontal_kernel_size = max(20, width // 16)
+    vertical_kernel_size = max(20, height // 15)
 
-    # Create horizontal and vertical kernels
     horizontal_kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (horizontal_kernel_size, 1))
     vertical_kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (1, vertical_kernel_size))
 
-    # Detect horizontal and vertical lines using morphology
-    horizontal_lines = cv2.morphologyEx(binary, cv2.MORPH_OPEN, horizontal_kernel, iterations=2)
+    # Step 5: Extract horizontal lines
+    horizontal_lines = cv2.morphologyEx(binary, cv2.MORPH_OPEN, horizontal_kernel, iterations=1)
+    # cv2.imshow("Step 5: Horizontal Lines", horizontal_lines)
+    # cv2.waitKey(0)
+    # cv2.destroyAllWindows()
+    # cv2.waitKey(1)
+    # Step 6: Extract vertical lines
     vertical_lines = cv2.morphologyEx(binary, cv2.MORPH_OPEN, vertical_kernel, iterations=2)
-
-    # Combine the line masks
+    # cv2.imshow("Step 6: Vertical Lines", vertical_lines)
+    # cv2.waitKey(0)
+    # cv2.destroyAllWindows()
+    # cv2.waitKey(1)
+    # Step 7: Combine and dilate lines
     combined_lines = cv2.bitwise_or(horizontal_lines, vertical_lines)
-
-    # Dilate the lines to ensure full coverage
-    dilated_lines = cv2.dilate(combined_lines, cv2.getStructuringElement(cv2.MORPH_RECT, (5, 5)), iterations=1)
-
-    # Remove lines from the binary image
+    dilated_lines = cv2.dilate(combined_lines, cv2.getStructuringElement(cv2.MORPH_RECT, (5, 5)), iterations=2)
+    # cv2.imshow("Step 7: Dilated Lines", dilated_lines)
+    # cv2.waitKey(0)
+    # cv2.destroyAllWindows()
+    # cv2.waitKey(1)
+    # Step 8: Remove lines from binary image
     no_lines = cv2.bitwise_and(binary, cv2.bitwise_not(dilated_lines))
-
-    # Remove small noise or dots using area filtering
+    # cv2.imshow("Step 8: No Lines Image", no_lines)
+    # cv2.waitKey(0)
+    # cv2.destroyAllWindows()
+    # cv2.waitKey(1)
+    # Step 9: Find and filter contours to clean small artifacts
     contours, _ = cv2.findContours(no_lines, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-    min_area_threshold = 35  # Minimum area for contours to keep
+    min_area_threshold = 90
     mask = np.zeros_like(no_lines)
     for cnt in contours:
         if cv2.contourArea(cnt) > min_area_threshold:
             cv2.drawContours(mask, [cnt], -1, 255, -1)
-
-    # Apply the mask to the cleaned binary image
+    # cv2.imshow("Step 9: Mask for Digits", mask)
+    # cv2.waitKey(0)
+    # cv2.destroyAllWindows()
+    # cv2.waitKey(1)
+    # Step 10: Clean binary image using the mask
     cleaned_binary = cv2.bitwise_and(no_lines, mask)
-
-    # Invert the image back to the original polarity
+    # cv2.imshow("Step 10: Cleaned Binary", cleaned_binary)
+    # cv2.waitKey(0)
+    # cv2.destroyAllWindows()
+    # cv2.waitKey(1)
+    # Step 11: Invert the image
     cleaned_image = cv2.bitwise_not(cleaned_binary)
-
-    # Optional: Smooth the image using inpainting
+    # cv2.imshow("Step 11: Cleaned Image", cleaned_image)
+    # cv2.waitKey(0)
+    # cv2.destroyAllWindows()
+    # cv2.waitKey(1)
+    # Step 12: Inpaint the cleaned image to restore digits
     inpainted = cv2.inpaint(cleaned_image, dilated_lines, inpaintRadius=3, flags=cv2.INPAINT_TELEA)
+    # cv2.imshow("Step 12: Final Inpainted Image", inpainted)
+
+    # cv2.waitKey(0)
+    # cv2.destroyAllWindows()
+    # cv2.waitKey(1)
 
     return inpainted
 
+# def plot_image(image, title="Image"):
+#     """Plots a single image using Matplotlib."""
+#     plt.imshow(cv2.cvtColor(image, cv2.COLOR_BGR2RGB))
+#     plt.title(title)
+#     plt.axis("off")
+#     plt.show()
+
+def pre_process_image(img, skip_dilate=False, flag=0):
+    """Uses a blurring function, adaptive thresholding and dilation to expose the main features of an image."""
+
+    # Gaussian blur with a kernal size (height, width) of 9.
+    # Note that kernal sizes must be positive and odd and the kernel must be square.
+    proc = cv2.GaussianBlur(img.copy(), (9, 9), 0)
+
+    # Adaptive threshold using 11 nearest neighbour pixels
+    proc = cv2.adaptiveThreshold(proc, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY, 11, 2)
+
+    # Invert colours, so gridlines have non-zero pixel values.
+    # Necessary to dilate the image, otherwise will look like erosion instead.
+    proc = cv2.bitwise_not(proc, proc)
+
+    if not skip_dilate:
+        # Dilate the image to increase the size of the grid lines.
+        kernel = np.array([[0., 1., 0.], [1., 1., 1.], [0., 1., 0.]], np.uint8)
+        proc = cv2.dilate(proc, kernel)
+
+    return proc
 
 
+# def plot_image(image, title="Image"):
+#     """Plots a single image using Matplotlib."""
+#     plt.imshow(cv2.cvtColor(image, cv2.COLOR_BGR2RGB))
+#     plt.title(title)
+#     plt.axis("off")
+#     plt.show()
 
-
-def grid(image):
+def extract_digits_from_warped(warped_grid):
     """
-    Detect the Sudoku grid using contours, perform perspective transform,
-    and clean the grid using line removal.
+    Extracts digits from the already warped Sudoku grid and stores them in a 2D list,
+    adjusting the area upwards and downwards for better digit extraction.
     """
-    # print(f"Loading image from: {image_path}")
-    # image = cv2.imread(image_path)
-    # if image is None:
-    #     print("Error: Image not loaded. Please check the file path.")
-    #     return None
-
-    # Resize and preprocess the image
-    image = cv2.resize(image, (450, 450))  # Resize to standard size
-    original_image = image.copy()
-    gray = cv2.cvtColor(original_image, cv2.COLOR_BGR2GRAY)
-    blurred = cv2.GaussianBlur(gray, (5, 5), 0)
-    edges = cv2.Canny(blurred, 50, 150)  # Edge detection for grid detection
-
-    # Find contours to detect the largest rectangle (grid)
-    contours, _ = cv2.findContours(edges, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-    if not contours:
-        print("No contours found!")
-        return None
-
-    # Get the largest contour
-    largest_contour = max(contours, key=cv2.contourArea)
-    epsilon = 0.02 * cv2.arcLength(largest_contour, True)
-    approx = cv2.approxPolyDP(largest_contour, epsilon, True)
-
-    if len(approx) == 4:
-        # Perspective transform
-        pts = approx.reshape(4, 2)
-        rect = np.zeros((4, 2), dtype="float32")
-        s = pts.sum(axis=1)
-        rect[0] = pts[np.argmin(s)]  # Top-left
-        rect[2] = pts[np.argmax(s)]  # Bottom-right
-        diff = np.diff(pts, axis=1)
-        rect[1] = pts[np.argmin(diff)]  # Top-right
-        rect[3] = pts[np.argmax(diff)]  # Bottom-left
-
-        # Transform the grid to a 450x450 image
-        dst = np.array([[0, 0], [450, 0], [450, 450], [0, 450]], dtype="float32")
-        M = cv2.getPerspectiveTransform(rect, dst)
-        warped = cv2.warpPerspective(original_image, M, (450, 450))
-
-        # Clean the grid by removing lines
-        cleaned_grid = remove_lines_and_thin_digits(warped)
-
-        return cleaned_grid
-    else:
-        print("Sudoku grid not found!")
-        return None
-    
-
-
-
-def segment_and_store_digits(warped_grid):
-    """
-    Segment the warped Sudoku grid into 9x9 cells and store each cell in a 2D list using np.vsplit and np.hsplit.
-    """
-    # Convert to grayscale if needed
+    # Ensure the input is grayscale
     if len(warped_grid.shape) == 3:
         warped_grid = cv2.cvtColor(warped_grid, cv2.COLOR_BGR2GRAY)
 
-    # Ensure the grid is a square and divisible by 9
+    # Get the dimensions of the warped grid
     height, width = warped_grid.shape
-    assert height == width, "The input grid must be square."
-    assert height % 9 == 0, "The grid size must be divisible by 9."
 
-    # Split the grid into 9 rows
-    rows = np.vsplit(warped_grid, 9)
-    digits = []
+    # Dynamically compute the cell size
+    cell_height = height // 9
+    cell_width = width // 9
 
-    # Split each row into 9 cells (columns) and append to the digits list
-    for row in rows:
-        cols = np.hsplit(row, 9)
-        digits.append(cols)
+    # Initialize the 2D list for digits
+    digit_grid = []
 
-    return digits
+    # Adjustment parameters (change these values as needed)
+    upward_adjustment = 0.05  # Decrease area upwards by 10% of cell height
+    downward_adjustment = 0.05  # Increase area downwards by 20% of cell height
+
+    # Loop through rows
+    for i in range(9):
+        row = []
+        # Loop through columns
+        for j in range(9):
+            # Calculate adjusted coordinates
+            start_y = int(i * cell_height + cell_height * upward_adjustment)
+            end_y = int((i + 1) * cell_height + cell_height * downward_adjustment)
+            start_x = j * cell_width
+            end_x = (j + 1) * cell_width
+
+            # Ensure boundaries stay within the grid dimensions
+            start_y = max(0, start_y)
+            end_y = min(height, end_y)
+            start_x = max(0, start_x)
+            end_x = min(width, end_x)
+
+            # Extract the adjusted cell using slicing
+            cell = warped_grid[start_y:end_y, start_x:end_x]
+
+            # Append the adjusted cell to the current row
+            row.append(cell)
+
+        # Append the row to the digit grid
+        digit_grid.append(row)
+
+    # Return the 2D digit grid
+    return digit_grid
 
 
 def preprocess_digit_for_prediction(digit_image):
@@ -228,8 +329,10 @@ def preprocess_digit_for_prediction(digit_image):
     )
     
     # Resize to 32x32 (assumes your model takes 32x32 inputs)
-    digit_image = cv2.resize(digit_image, (32, 32))  
-    # cv2.imshow("digit",digit_image)
+    digit_image = cv2.resize(digit_image, (32, 32))
+    
+    # Display the preprocessed digit (optional)
+    # cv2.imshow("Preprocessed Digit", digit_image)
     # cv2.waitKey(0)
     # cv2.destroyAllWindows()
     # cv2.waitKey(1)
@@ -242,9 +345,6 @@ def preprocess_digit_for_prediction(digit_image):
     digit_image = np.expand_dims(digit_image, axis=0)   # Add batch dimension
     
     return digit_image
-import cv2
-import numpy as np
-
 def recognize_digits(digits,cnn_model):
     """
     Recognize digits in a Sudoku grid using a pre-trained model.
@@ -267,8 +367,8 @@ def recognize_digits(digits,cnn_model):
                     recognized_digit = np.argmax(prediction)
                     confidence = np.max(prediction)  # Get the confidence score of the prediction
 
-                    # Mark the digit as 0 if confidence is less than 0.6
-                    if confidence < 0.6:
+                    # Mark the digit as 0 if confidence is less than 0.5
+                    if confidence < 0.5:
                         recognized_digit = 0
 
                     sudoku_row.append(recognized_digit)
@@ -283,79 +383,77 @@ def recognize_digits(digits,cnn_model):
 
     return sudoku_grid_array
 
-
 def overlay_digits_on_sudoku(image, initial_grid, solved_grid):
-    # Load the Sudoku image
-    # image = cv2.imread(image_path)
-
+    """
+    Overlay solved digits onto the Sudoku grid and return the final output image.
+    """
+    # Load the image
     if image is None:
-        print("Error loading the image.")
-        return
+        raise ValueError("Error: Image could not be loaded.")
 
-    # Convert to grayscale and detect edges
     gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
-    blurred = cv2.GaussianBlur(gray, (5, 5), 0)
-    edges = cv2.Canny(blurred, 50, 150)
 
-    # Find contours and locate the largest rectangular contour (assumed to be the Sudoku grid)
-    contours, _ = cv2.findContours(edges, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)
-    max_area = 0
-    grid_contour = None
-    for contour in contours:
-        area = cv2.contourArea(contour)
-        if area > max_area:
-            peri = cv2.arcLength(contour, True)
-            approx = cv2.approxPolyDP(contour, 0.02 * peri, True)
-            if len(approx) == 4:  # Looking for a quadrilateral
-                max_area = area
-                grid_contour = approx
+    # Preprocess the image (blurring + thresholding)
+    binary = pre_process_image(gray)
 
-    if grid_contour is None:
-        print("Could not detect the Sudoku grid.")
-        return
+    # Find the largest contour
+    try:
+        largest_contour = find_largest_contour(binary)
+        corners = get_contour_corners(largest_contour)
+    except ValueError as e:
+        raise ValueError(f"Error: {e}")
 
-    # Warp perspective to a flat view of the Sudoku grid
-    def order_points(pts):
-        rect = np.zeros((4, 2), dtype="float32")
-        s = pts.sum(axis=1)
-        rect[0] = pts[np.argmin(s)]  # Top-left
-        rect[2] = pts[np.argmax(s)]  # Bottom-right
-        diff = np.diff(pts, axis=1)
-        rect[1] = pts[np.argmin(diff)]  # Top-right
-        rect[3] = pts[np.argmax(diff)]  # Bottom-left
-        return rect
-
-    ordered_points = order_points(grid_contour.reshape(4, 2))
-    grid_points = np.float32([[0, 0], [450, 0], [450, 450], [0, 450]])
-    matrix = cv2.getPerspectiveTransform(ordered_points, grid_points)
-    warped = cv2.warpPerspective(image, matrix, (450, 450))
+    # Perform a perspective transform
+    warped = four_point_transform(image, corners)
 
     # Define font settings
     font = cv2.FONT_HERSHEY_SIMPLEX
     font_scale = 0.8
     thickness = 2
-    cell_size = 450 // 9  # Assuming a 9x9 grid
 
+    # Calculate cell dimensions dynamically
+    grid_height, grid_width = warped.shape[:2]
+    cell_height = grid_height // 9
+    cell_width = grid_width // 9
 
     # Overlay solved digits
     for i in range(9):
         for j in range(9):
-            if initial_grid[i][j] == 0:  # Only draw solved cells
+            if initial_grid[i][j] == 0:  # Only overlay solved cells
                 digit = solved_grid[i][j]
-                text_size = cv2.getTextSize(str(digit), font, font_scale, thickness)[0]
-                text_x = j * cell_size + (cell_size - text_size[0]) // 2
-                text_y = i * cell_size + (cell_size + text_size[1]) // 2
-                cv2.putText(warped, str(digit), (text_x, text_y), font, font_scale, (0, 255, 0), thickness)
 
-    # Map the modified grid back to the original perspective
-    inverse_matrix = cv2.getPerspectiveTransform(grid_points, ordered_points)
+                # Calculate the size of the digit text
+                text_size = cv2.getTextSize(str(digit), font, font_scale, thickness)[0]
+
+                # Calculate the center of the current cell
+                cell_center_x = j * cell_width + cell_width // 2
+                cell_center_y = i * cell_height + cell_height // 2
+
+                # Calculate the top-left position for the digit text
+                text_x = cell_center_x - text_size[0] // 2  # Center horizontally
+                text_y = cell_center_y + text_size[1] // 2  # Center vertically
+
+                # Draw the text on the warped image
+                cv2.putText(warped, str(digit), (text_x, text_y), font, font_scale, (255, 0, 0), thickness)
+
+    # Inverse the perspective transform
+    rect = order_points(corners)
+    dst = np.array([
+        [0, 0],
+        [grid_width - 1, 0],
+        [grid_width - 1, grid_height - 1],
+        [0, grid_height - 1]
+    ], dtype="float32")
+
+    inverse_matrix = cv2.getPerspectiveTransform(dst, rect)
     inversed = cv2.warpPerspective(warped, inverse_matrix, (image.shape[1], image.shape[0]))
 
-    # Blend the inversed grid with the original image
-    mask = cv2.warpPerspective(np.ones_like(warped) * 255, inverse_matrix, (image.shape[1], image.shape[0]))
+    # Blend the inversed image with the original
+    mask = cv2.warpPerspective(np.ones_like(warped, dtype=np.uint8) * 255, inverse_matrix, (image.shape[1], image.shape[0]))
     mask = cv2.cvtColor(mask, cv2.COLOR_BGR2GRAY)
     _, mask = cv2.threshold(mask, 1, 255, cv2.THRESH_BINARY)
     masked_image = cv2.bitwise_and(image, image, mask=255 - mask)
     output_image = cv2.add(masked_image, inversed)
-    return output_image
 
+    # Return the final output image
+    return output_image

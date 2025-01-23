@@ -41,12 +41,15 @@
             max-width: 100%;
             height: auto;
             display: none;
+            margin:auto;
         }
 
-        #loading {
-            display: none;
+        #loading, #status-message {
+            font-weight: bold;
+            font-size: 20px;
         }
-        #original_image,#solved_image1{
+
+        #original_image, #solved_image1 {
             font-weight: bold;
             font-size: 35px;
             color: purple;
@@ -62,59 +65,82 @@
             <br><br>
             <button class="btn" type="submit">Upload and Solve</button>
         </form>
-        <p id ="original_image"></p>
+        <p id="original_image"></p>
         <img id="preview" alt="Uploaded Sudoku Preview">
-        <div id="loading">Solving Sudoku... Please wait.</div>
+        <br>
+        <div id="loading"></div>
+        <p id="status-message"></p>
         <p id="solved_image1"></p>
         <img id="solved-preview" alt="Solved Sudoku Image">
     </div>
 
     <script>
-        document.getElementById('upload-form').addEventListener('submit', function(event) {
+        document.getElementById('upload-form').addEventListener('submit', async function (event) {
             event.preventDefault();
-
+    
             const formData = new FormData();
             const fileInput = document.getElementById('image-input');
             const file = fileInput.files[0];
             const preview = document.getElementById('preview');
             const solvedPreview = document.getElementById('solved-preview');
             const loading = document.getElementById('loading');
-
+            const statusMessage = document.getElementById('status-message');
+            const solvedImageText = document.getElementById('solved_image1');
+    
             if (file) {
                 const reader = new FileReader();
-                document.getElementById("original_image").innerHTML="<b>Original Image</b>"
-                reader.onload = function(e) {
+                document.getElementById("original_image").innerHTML = "<b>Original Image</b>";
+    
+                reader.onload = function (e) {
                     preview.src = e.target.result;
                     preview.style.display = 'block';
                 };
-
+    
                 reader.readAsDataURL(file);
-
+    
                 formData.append('image', file);
-
-                loading.style.display = 'block';
+    
+                // Hide the solved image and text immediately
                 solvedPreview.style.display = 'none';
+                solvedImageText.innerHTML = "";
+    
+                // Show the loading indicator
+                loading.style.display = 'block';
+                statusMessage.innerHTML = "Uploading the image and processing it...";
 
-                fetch('/', {
-                    method: 'POST',
-                    body: formData
-                })
-                .then(response => response.json())
-                .then(data => {
-                    loading.style.display = 'none';
-                    document.getElementById("solved_image1").innerHTML="Solved Image"
-
+                // Start status update loop
+                let statuses = ["Detecting digits...", "Solving the puzzle...", "Overlaying the solution..."];
+                let statusIndex = 0;
+                let statusInterval = setInterval(() => {
+                    statusMessage.innerHTML = statuses[statusIndex];
+                    statusIndex = (statusIndex + 1) % statuses.length;
+                }, 7000);
+    
+                try {
+                    const response = await fetch('/', {
+                        method: 'POST',
+                        body: formData
+                    });
+    
+                    const data = await response.json();
+    
+                    // Stop the status update loop immediately when solved image is received
+                    clearInterval(statusInterval);
+    
                     if (data.solved_image) {
+                        loading.style.display = 'none';
                         solvedPreview.src = `data:image/png;base64,${data.solved_image}`;
                         solvedPreview.style.display = 'block';
+                        solvedImageText.innerHTML = "Solved Image";
+                        statusMessage.innerHTML = ""; // Clear status message
                     } else {
-                        alert("Error: " + (data.error || "Unknown error"));
+                        statusMessage.innerHTML = "Error: " + (data.error || "Unknown error");
                     }
-                })
-                .catch(error => {
+                } catch (error) {
+                    clearInterval(statusInterval); // Stop the loop on error
                     loading.style.display = 'none';
-                    alert("Error solving Sudoku: " + error.message);
-                });
+                    statusMessage.innerHTML = "Error solving Sudoku: " + error.message;
+                }
             }
         });
     </script>

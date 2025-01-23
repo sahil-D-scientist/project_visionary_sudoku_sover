@@ -1,0 +1,8 @@
+# Python >=3.10 is required
+Flask
+opencv-python
+tensorflow  # Corrected to the latest available version
+numpy
+matplotlib
+Pillow
+gunicorn
