@@ -89,7 +89,7 @@ def sudoku():
             return jsonify({"solved_image": solved_image_base64})
         
         except Exception as e:
-            return jsonify({"error": f"An error occurred during processing: {str(e)}"}), 500
+            return jsonify({"error": f"Please upload the image properly: {str(e)}"}), 500
 
 
 
