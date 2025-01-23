@@ -66,7 +66,7 @@ def sudoku():
             digit_cells = extract_digits_from_warped(cleaned_image)
 
             # Load the pre-trained CNN model
-            model_path = "/Users/sahilsingla/Downloads/deployment_series/flask/project_visionary_sudoku_solver/trained_model.h5"
+            model_path = "trained_model.h5"
             cnn_model = load_model(model_path)
 
             # Recognize the digits in the grid
