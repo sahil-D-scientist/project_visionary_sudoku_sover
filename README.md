@@ -59,4 +59,4 @@ http://127.0.0.1:8080
 ---
 
 ## Live Project
-You can find the live project [here](#https://project-visionary-sudoku-solver.onrender.com).
+You can find the live project [here](https://project-visionary-sudoku-solver.onrender.com).
