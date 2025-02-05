@@ -54,7 +54,7 @@ http://127.0.0.1:8080
    ```bash
    python app.py
    ```
-3. **Host the application on a live server for public access if required.**
+3. **Host the application on a live server for public acces if required.**
 
 ---
 
